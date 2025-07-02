@@ -118,13 +118,14 @@ app.post('/ask', async (req, res) => {
         const cursor = collection.find(
             {},
             {
-                vector: query,
+                vector: query, // ✅ Only this will work now
                 limit: 3,
-                projection: { '*': 1 },
+                projection: { "*": 1 },
                 includeSimilarity: true,
-                similarityThreshold: 0.7,
+                similarityThreshold: 0.7
             }
         );
+
 
         const docs = await cursor.toArray();
         if (docs.length === 0) {
