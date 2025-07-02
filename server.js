@@ -118,7 +118,7 @@ app.post('/ask', async (req, res) => {
         const cursor = collection.find(
             {},
             {
-                vector: { query },
+                vector: query,
                 limit: 3,
                 projection: { '*': 1 },
                 includeSimilarity: true,
