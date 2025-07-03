@@ -14,7 +14,7 @@ app.use(bodyParser.json());
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-
+const collection_name = "insurance_dataset"
 
 // http://localhost:4000/search - Local testing
 
@@ -35,20 +35,21 @@ app.post('/connect', async (req, res) => {
 // 🔹 /collection (create or reset)
 app.post('/collection', async (req, res) => {
     try {
+        const { collection } = req.body;
         const client = new DataAPIClient();
         const db = client.db(process.env.ASTRA_DB_API_ENDPOINT, {
             token: process.env.ASTRA_DB_APPLICATION_TOKEN,
         });
 
         // Uncomment if you want to reset the collection:
-        // await db.dropCollection('insurance_dataset');
+        await db.dropCollection(collection);
 
         // Uncomment to create a collection with vector config:
-        // await db.createCollection('insurance_dataset', {
-        //   vector: { dimension: 1536, metric: 'cosine' },
-        //   service: { provider: 'datastax', model: 'NV-Embed-QA' },
-        //   fieldToEmbed: '$vectorize'
-        // });
+        await db.createCollection(collection, {
+          vector: { dimension: 1536, metric: 'cosine' },
+          service: { provider: 'datastax', model: 'NV-Embed-QA' },
+          fieldToEmbed: '$vectorize'
+        });
 
         return res.status(200).json({ success: true, message: 'Collection endpoint hit.' });
     } catch (error) {
@@ -94,7 +95,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
         const client = new DataAPIClient();
         const db = client.db(endpoint, { token });
-        const collection = await db.collection('insurance_dataset');
+        const collection = await db.collection(collection_name);
 
         const result = await collection.insertMany(chunks);
 
@@ -125,7 +126,7 @@ app.post('/insert', async (req, res) => {
             token: process.env.ASTRA_DB_APPLICATION_TOKEN,
         });
 
-        const collection = await db.collection('insurance_dataset');
+        const collection = await db.collection(collection_name);
         const result = await collection.insertMany(data);
 
         return res.status(200).json({ success: true, insertedCount: result.insertedCount });
@@ -153,7 +154,7 @@ app.post('/search', async function (req, res) {
         const client = new DataAPIClient();
         const db = client.db(endpoint, { token });
 
-        const collection = await db.collection('insurance_dataset');
+        const collection = await db.collection(collection_name);
 
         // ✅ Same as Lambda — object shorthand works in v2.0.1
         const cursor = collection.find(
@@ -191,7 +192,7 @@ app.post('/ask', async (req, res) => {
         const client = new DataAPIClient();
         const db = client.db(endpoint, { token });
 
-        const collection = await db.collection('insurance_workspace');
+        const collection = await db.collection(collection_name);
 
         // 🔹 Semantic Search with auto-vectorize
         const cursor = collection.find(
