@@ -71,54 +71,70 @@ app.post('/insert', async (req, res) => {
     }
 });
 
-// 🔹 /search
-app.post('/search', async (req, res) => {
+//Search
+app.post('/search', async function (req, res) {
     try {
         const { query, limit = 3 } = req.body;
         if (!query) {
-            return res.status(400).json({ error: "'query' is required." });
+            return res.status(400).json({ error: "Missing 'query' in request body" });
         }
 
+        const endpoint = process.env.ASTRA_DB_API_ENDPOINT;
+        const token = process.env.ASTRA_DB_APPLICATION_TOKEN;
+
+        if (!endpoint || !token) {
+            return res.status(500).json({ error: "Missing required env vars." });
+        }
+
+        const { DataAPIClient } = require('@datastax/astra-db-ts');
         const client = new DataAPIClient();
-        const db = client.db(process.env.ASTRA_DB_API_ENDPOINT, {
-            token: process.env.ASTRA_DB_APPLICATION_TOKEN,
-        });
+        const db = client.db(endpoint, { token });
 
         const collection = await db.collection('insurance_dataset');
+
+        // ✅ Same as Lambda — object shorthand works in v2.0.1
         const cursor = collection.find(
             {},
             {
-                vector: { query },
+                vector: { query },       // ✅ keep this for v2.0.1
                 limit,
-                projection: { '*': 1 },
+                projection: { "*": 1 }
             }
         );
 
         const results = await cursor.toArray();
+
         return res.status(200).json({ success: true, results });
     } catch (error) {
+        console.error("❌ Error searching insurance_dataset:", error);
         return res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// 🔹 /sendEmail (query → vector search → GPT summary)
+
+// 🔹 /Ask AI (query → vector search → GPT summary)
 app.post('/ask', async (req, res) => {
     try {
         const { query } = req.body;
+
         if (!query) {
-            return res.status(400).json({ error: "'query' is required." });
+            return res.status(400).json({ error: "Missing 'query' in request body" });
         }
 
+        // 🔹 Connect to Astra DB
+        const endpoint = process.env.ASTRA_DB_API_ENDPOINT;
+        const token = process.env.ASTRA_DB_APPLICATION_TOKEN;
+
         const client = new DataAPIClient();
-        const db = client.db(process.env.ASTRA_DB_API_ENDPOINT, {
-            token: process.env.ASTRA_DB_APPLICATION_TOKEN,
-        });
+        const db = client.db(endpoint, { token });
 
         const collection = await db.collection('insurance_workspace');
+
+        // 🔹 Semantic Search with auto-vectorize
         const cursor = collection.find(
             {},
             {
-                vector: query, // ✅ Only this will work now
+                vector: { query }, // ✅ this works in v2.0.1
                 limit: 3,
                 projection: { "*": 1 },
                 includeSimilarity: true,
@@ -126,13 +142,16 @@ app.post('/ask', async (req, res) => {
             }
         );
 
-
         const docs = await cursor.toArray();
+
         if (docs.length === 0) {
-            return res.status(200).json({ success: true, summary: 'No matches found.' });
+            return res.status(200).json({ success: true, summary: "No matches found." });
         }
 
-        const contextText = docs.map(doc => `Context:\n${doc.$vectorize}\n`).join('\n');
+        // 🔹 Prepare context for OpenAI
+        const contextText = docs
+            .map(doc => `Context:\n${doc.$vectorize}\n`)
+            .join("\n");
 
         const finalPrompt = `Use the following pieces of context to answer the question at the end.
 
@@ -140,25 +159,28 @@ ${contextText}
 
 Question: ${query}`;
 
+        // 🔹 Query OpenAI (gpt-4o-mini)
         const completion = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
+            model: "gpt-4o-mini",
             temperature: 0,
             messages: [
                 {
-                    role: 'system',
-                    content: 'You are a helpful assistant. Answer the question based ONLY on the provided context.',
+                    role: "system",
+                    content: "You are a helpful assistant. Answer the question based ONLY on the provided context."
                 },
                 {
-                    role: 'user',
-                    content: finalPrompt,
-                },
-            ],
+                    role: "user",
+                    content: finalPrompt
+                }
+            ]
         });
 
         const summary = completion.choices[0].message.content;
+
         return res.status(200).json({ success: true, summary });
+
     } catch (error) {
-        console.error('❌ Error in /sendEmail:', error);
+        console.error("❌ Error in /ask:", error);
         return res.status(500).json({ success: false, error: error.message });
     }
 });
