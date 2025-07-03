@@ -5,12 +5,19 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const { DataAPIClient } = require('@datastax/astra-db-ts');
 const { OpenAI } = require('openai');
+const multer = require('multer');
+const pdfParse = require('pdf-parse');
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+
+
+// http://localhost:4000/search - Local testing
+
 
 // 🔹 /connect
 app.post('/connect', async (req, res) => {
@@ -48,6 +55,62 @@ app.post('/collection', async (req, res) => {
         return res.status(500).json({ error: error.message });
     }
 });
+
+// 🔹 /upload
+const upload = multer(); // uses memory storage
+app.post('/upload', upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'Missing PDF file.' });
+        }
+
+        const fileBuffer = req.file.buffer;
+        const parsed = await pdfParse(fileBuffer);
+        const fullText = parsed.text || '';
+
+        // 🟢 Step 1: Normalize whitespace
+        const cleanedText = fullText.replace(/\s+/g, ' ').trim();
+
+        // 🟢 Step 2: Split into 500-char chunks, 0 overlap
+        const CHUNK_SIZE = 500;
+        const OVERLAP = 0;
+        const chunks = [];
+
+        for (let i = 0; i < cleanedText.length; i += (CHUNK_SIZE - OVERLAP)) {
+            const chunk = cleanedText.slice(i, i + CHUNK_SIZE);
+            if (chunk.length > 0) {
+                chunks.push({
+                    _id: `chunk-${Date.now()}-${i}`,
+                    $vectorize: chunk,
+                    type: 'pdf',
+                    source: req.file.originalname,
+                });
+            }
+        }
+
+        // 🟢 Step 3: Insert into AstraDB
+        const endpoint = process.env.ASTRA_DB_API_ENDPOINT;
+        const token = process.env.ASTRA_DB_APPLICATION_TOKEN;
+
+        const client = new DataAPIClient();
+        const db = client.db(endpoint, { token });
+        const collection = await db.collection('insurance_dataset');
+
+        const result = await collection.insertMany(chunks);
+
+        return res.status(200).json({
+            success: true,
+            insertedCount: result.insertedCount,
+            fileName: req.file.originalname,
+            chunkSize: CHUNK_SIZE,
+        });
+
+    } catch (error) {
+        console.error('❌ Error inserting PDF:', error);
+        return res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 
 // 🔹 /insert
 app.post('/insert', async (req, res) => {
